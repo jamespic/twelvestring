@@ -16,8 +16,8 @@ import java.math.BigInteger
 object TwelveString {
   val SilentNote = -1
   val NoChangeCode = 0
-  val SilenceCode = 13
-  val EOFCode = 14
+  val SilenceCode = 12
+  val EOFCode = 13
   val CjkSize = 20992
   val CjkStart = 0x4E00
 
@@ -26,14 +26,15 @@ object TwelveString {
   val blockSize = samplesPerSecond / blocksPerSecond
   val concertA = 440
   val concertAInBlock = concertA / blocksPerSecond
-  val lowerCutoff = 20
+  val lowerCutoff = 50
   val lowerCutoffInBlock = lowerCutoff.toDouble / blocksPerSecond
-  val upperCutoff = 20000
+  val upperCutoff = 11025
   val upperCutoffInBlock = upperCutoff.toDouble / blocksPerSecond
   val threshold = 0.02
+  val noiseThreshold = 3.5
   val notes = {
     for (n <- 0 until blockSize) yield {
-      mod13(round((log(n) - log(concertAInBlock)) / log(2) * 13).toInt)
+      mod12(round((log(n) - log(concertAInBlock)) / log(2) * 12).toInt)
     }
   }
   val transformer = new DoubleDHT_1D(blockSize)
@@ -41,13 +42,13 @@ object TwelveString {
   val weightings = {
     for (n <- 0 until blockSize) yield {
       val freq = n * blocksPerSecond
-      if ((freq <= 20000) && (freq >= 20)) aWeighting(freq) else 0
+      if ((freq <= upperCutoff) && (freq >= lowerCutoff)) aWeighting(freq) / freq else 0
     }
   }
 
   val soundBlocks = {
-    for (i <- 0 until 13) yield {
-      val centreFrequency = concertAInBlock * 2.0 ~^ (i / 13.0)
+    for (i <- 0 until 12) yield {
+      val centreFrequency = concertAInBlock * 2.0 ~^ (i / 12.0)
       val frequencies = for (i <- -10 to 10; f = centreFrequency * 2 ~^ i; if lowerCutoffInBlock <= f && f <= upperCutoffInBlock) yield round(f).toInt
       val dht: Array[Double] = (0 until blockSize).map(f => if (frequencies contains f) 1.0 else 0.0)(breakOut)
       transformer.inverse(dht, false)
@@ -64,7 +65,7 @@ object TwelveString {
   }
 
   val frequencyTable = new nayuki.arithcode.SimpleFrequencyTable(
-    Array(10, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1) // Initial heuristic - adaptive coding will take over
+    Array(10, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1) // Initial heuristic - adaptive coding will take over
   )
 
   implicit class Powerable(val x: Double) extends AnyVal {
@@ -75,16 +76,16 @@ object TwelveString {
     12200 ~^ 2 * f ~^ 4 / ((f ~^ 2 + 20.6 ~^ 2) * sqrt((f ~^ 2 + 107.7 ~^ 2) * (f ~^ 2 + 737.9 ~^ 2)) * (f ~^ 2 + 12200 ~^ 2))
   }
 
-  def mod13(i: Int) = {
-    val x = i % 13
-    if (x >= 0) x else x + 13
+  def mod12(i: Int) = {
+    val x = i % 12
+    if (x >= 0) x else x + 12
   }
 
   def makeBlocks(input: Array[Double], debugIndex: Option[Int] = None) = {
     val blocks = for (block <- input.grouped(blockSize) if block.length == blockSize) yield {
       val data = block.map(_.toDouble)
       transformer.forward(data)
-      val frequencies = new Array[Double](13)
+      val frequencies = new Array[Double](12)
       for ((x, i) <- data.zipWithIndex) {
         val note = notes(i)
         val impact = abs(x * weightings(i))
@@ -111,7 +112,9 @@ object TwelveString {
     var lastNote = 0
     for (block <- blocks) yield {
       val (vol, note) = block.zipWithIndex.maxBy(_._1)
-      if (vol < maxVol * threshold) SilentNote
+      val minVol = block.min
+      //if (vol < maxVol * threshold) SilentNote
+      if (vol / minVol < noiseThreshold) SilentNote
       else {
         if (block(lastNote) > quality * vol) lastNote
         else {
@@ -136,7 +139,7 @@ object TwelveString {
         silent = false
         SilenceCode
       } else {
-        try mod13(note - currentNote)
+        try mod12(note - currentNote)
         finally currentNote = note
       }
     }
@@ -158,7 +161,7 @@ object TwelveString {
         if (silent & (code == NoChangeCode)) {
           SilentNote
         } else {
-          currentNote = mod13(currentNote + code)
+          currentNote = mod12(currentNote + code)
           currentNote
         }
       }
@@ -240,7 +243,7 @@ object TwelveString {
     def more = {
       code = decoder.read(table)
       table.increment(code)
-      code != EOFCode
+      code != EOFCode // Why isn't this working???
     }
     while (more) {
       decodedBuilder += code
@@ -290,7 +293,7 @@ object TwelveString {
     val blocks = makeBlocks16Bit(data)
     val noteSeq = tweakableNoteMaker(blocks, quality)
     val entropised = noteEntropiser(noteSeq)
-    val table = new nayuki.arithcode.SimpleFrequencyTable(new Array[Int](15))
+    val table = new nayuki.arithcode.SimpleFrequencyTable(new Array[Int](14))
     for (code <- entropised) table.increment(code)
     table
   }
