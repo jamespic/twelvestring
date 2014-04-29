@@ -17,7 +17,6 @@ object TwelveString {
   val SilentNote = -1
   val NoChangeCode = 0
   val SilenceCode = 12
-  val EOFCode = 13
   val CjkSize = 20992
   val CjkStart = 0x4E00
 
@@ -25,16 +24,19 @@ object TwelveString {
   val samplesPerSecond = 44100
   val blockSize = samplesPerSecond / blocksPerSecond
   val concertA = 440
-  val concertAInBlock = concertA / blocksPerSecond
+  val concertAInBlock = concertA.toDouble / blocksPerSecond
   val lowerCutoff = 50
   val lowerCutoffInBlock = lowerCutoff.toDouble / blocksPerSecond
   val upperCutoff = 11025
   val upperCutoffInBlock = upperCutoff.toDouble / blocksPerSecond
   val threshold = 0.02
   val noiseThreshold = 3.5
+  val noteWidth = 0.375
   val notes = {
     for (n <- 0 until blockSize) yield {
-      mod12(round((log(n) - log(concertAInBlock)) / log(2) * 12).toInt)
+      val roughNote = (log(n) - log(concertAInBlock)) / log(2) * 12
+      val exactNote = round(roughNote)
+      if (abs(roughNote - exactNote) < 0.375) mod12(exactNote.toInt) else SilentNote
     }
   }
   val transformer = new DoubleDHT_1D(blockSize)
@@ -42,7 +44,7 @@ object TwelveString {
   val weightings = {
     for (n <- 0 until blockSize) yield {
       val freq = n * blocksPerSecond
-      if ((freq <= upperCutoff) && (freq >= lowerCutoff)) aWeighting(freq) / freq else 0
+      if ((freq <= upperCutoff) && (freq >= lowerCutoff)) aWeighting(freq) /*/ freq*/ else 0
     }
   }
 
@@ -65,8 +67,15 @@ object TwelveString {
   }
 
   val frequencyTable = new nayuki.arithcode.SimpleFrequencyTable(
-    Array(10, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1) // Initial heuristic - adaptive coding will take over
+    Array(10, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2) // Initial heuristic - adaptive coding will take over
   )
+
+  val lengthTable = new nayuki.arithcode.SimpleFrequencyTable({
+    val array = Array.fill(80 * 60 * blocksPerSecond)(1) // Allow any length up to 80 minutes
+    for (i <- 0 to 5 * 60 * blocksPerSecond) array(i) = 20 // Lengths under 5 minutes need less entropy
+    array(60 * blocksPerSecond) = 1000 // Clips of exactly 60 seconds need less entropy still (yes, I know it's cheating)
+    array
+  })
 
   implicit class Powerable(val x: Double) extends AnyVal {
     def ~^(p: Double) = pow(x, p)
@@ -88,9 +97,11 @@ object TwelveString {
       val frequencies = new Array[Double](12)
       for ((x, i) <- data.zipWithIndex) {
         val note = notes(i)
-        val impact = abs(x * weightings(i))
-        if (Some(note) == debugIndex) println(s"Adding $impact (freq $i, volume $x) to note $note")
-        frequencies(note) += impact
+        if (note != SilentNote) {
+          val impact = abs(x * weightings(i))
+          if (Some(note) == debugIndex) println(s"Adding $impact (freq $i, volume $x) to note $note")
+          frequencies(note) = frequencies(note) max impact
+        }
       }
       frequencies.toIndexedSeq
     }
@@ -180,7 +191,7 @@ object TwelveString {
     val output = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(file)))
     try {
       for (s <- data) output.writeShort(s)
-    } finally output.close
+    } finally output.close()
   }
 
   def read(file: String) = {
@@ -223,12 +234,11 @@ object TwelveString {
     val outputStream = new ByteArrayOutputStream
     val byteOutput = new BitOutputStream(outputStream)
     val encoder = new ArithmeticEncoder(byteOutput)
+    encoder.write(lengthTable, entropised.length)
     for (code <- entropised) {
       encoder.write(table, code)
       table.increment(code)
     }
-    encoder.write(table, EOFCode)
-    table.increment(EOFCode)
     encoder.finish()
     outputStream.toByteArray
   }
@@ -238,14 +248,11 @@ object TwelveString {
     val inputStream = new ByteArrayInputStream(input)
     val bitInput = new BitInputStream(inputStream)
     val decoder = new ArithmeticDecoder(bitInput)
-    var code = 0
     val decodedBuilder = IndexedSeq.newBuilder[Int]
-    def more = {
-      code = decoder.read(table)
+    val length = decoder.read(lengthTable)
+    for (i <- 0 until length) {
+      val code = decoder.read(table)
       table.increment(code)
-      code != EOFCode // Why isn't this working???
-    }
-    while (more) {
       decodedBuilder += code
     }
     val decoded = decodedBuilder.result()
