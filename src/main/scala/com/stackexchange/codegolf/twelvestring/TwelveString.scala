@@ -28,7 +28,7 @@ object TwelveString {
   val upperCutoff = 11025
   val upperCutoffInBlock = upperCutoff.toDouble / blocksPerSecond
   val threshold = 0.02
-  val noiseThreshold = 3.5
+  val noiseThreshold = 2.5
   val noteWidth = 0.375
   val notes = {
     for (n <- 0 until blockSize) yield {
