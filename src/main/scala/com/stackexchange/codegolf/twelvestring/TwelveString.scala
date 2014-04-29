@@ -4,9 +4,7 @@ import edu.emory.mathcs.jtransforms.dht.DoubleDHT_1D
 import java.lang.Math._
 import scala.collection.{mutable, breakOut}
 import java.io._
-import scala.Some
 import nayuki.arithcode._
-import edu.emory.mathcs.jtransforms.dct.DoubleDCT_1D
 import scala.Some
 import java.math.BigInteger
 
