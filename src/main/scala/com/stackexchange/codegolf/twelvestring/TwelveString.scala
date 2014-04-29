@@ -238,6 +238,7 @@ object TwelveString {
       table.increment(code)
     }
     encoder.finish()
+    byteOutput.close()
     outputStream.toByteArray
   }
 
