@@ -310,4 +310,21 @@ object TwelveString {
     }
     throw new Exception("Impossible!")
   }
+
+  def main(args: Array[String]) = {
+    args(0) match {
+      case "encode" =>
+        val encoded = encodeToSize(args(1), 140)
+        val writer = new OutputStreamWriter(new FileOutputStream(args(2)), "UTF-8")
+        try {
+          writer.write(encoded)
+        } finally writer.close()
+        println(s"Encoded ${args(1)} as $encoded")
+      case "decode" =>
+        val reader = scala.io.Source.fromFile(args(1), "UTF-8")
+        val encoded = reader.getLines().mkString("")
+        decodeString(encoded, args(2))
+        println(s"Saved $encoded to ${args(2)}")
+    }
+  }
 }
