@@ -7,6 +7,7 @@ import java.io._
 import nayuki.arithcode._
 import scala.Some
 import java.math.BigInteger
+import edu.emory.mathcs.jtransforms.fft.DoubleFFT_1D
 
 /**
  * Created by hisg085 on 28/04/2014.
@@ -23,6 +24,7 @@ object TwelveString {
   val blockSize = samplesPerSecond / blocksPerSecond
   val concertA = 440
   val concertAInBlock = concertA.toDouble / blocksPerSecond
+  val concertATimeDomain = samplesPerSecond.toDouble / concertA
   val lowerCutoff = 50
   val lowerCutoffInBlock = lowerCutoff.toDouble / blocksPerSecond
   val upperCutoff = 11025
@@ -30,28 +32,27 @@ object TwelveString {
   val threshold = 0.02
   val noiseThreshold = 2.5
   val noteWidth = 0.375
-  val notes = {
-    for (n <- 0 until blockSize) yield {
-      val roughNote = (log(n) - log(concertAInBlock)) / log(2) * 12
-      val exactNote = round(roughNote)
-      if (abs(roughNote - exactNote) < 0.375) mod12(exactNote.toInt) else SilentNote
-    }
-  }
-  val transformer = new DoubleDHT_1D(blockSize)
 
-  val weightings = {
-    for (n <- 0 until blockSize) yield {
-      val freq = n * blocksPerSecond
-      if ((freq <= upperCutoff) && (freq >= lowerCutoff)) aWeighting(freq) /*/ freq*/ else 0
-    }
+  def note(f: Double) = {
+    val roughNote = (log(f) - log(concertA)) / log(2) * 12
+    val exactNote = round(roughNote)
+    if (abs(roughNote - exactNote) < noteWidth) mod12(exactNote.toInt) else SilentNote
   }
+
+  val notes = for (n <- 0 until blockSize) yield note(n * blocksPerSecond)
+
+  val dhtTransformer = new DoubleDHT_1D(blockSize)
+
+  def weighting(f: Double) = if ((f <= upperCutoff) && (f >= lowerCutoff)) aWeighting(f) else 0.0
+
+  val weightings = for (n <- 0 until blockSize) yield weighting(n * blocksPerSecond)
 
   val soundBlocks = {
     for (i <- 0 until 12) yield {
       val centreFrequency = concertAInBlock * 2.0 ~^ (i / 12.0)
       val frequencies = for (i <- -10 to 10; f = centreFrequency * 2 ~^ i; if lowerCutoffInBlock <= f && f <= upperCutoffInBlock) yield round(f).toInt
       val dht: Array[Double] = (0 until blockSize).map(f => if (frequencies contains f) 1.0 else 0.0)(breakOut)
-      transformer.inverse(dht, false)
+      dhtTransformer.inverse(dht, false)
       dht
     }
   }
@@ -91,13 +92,14 @@ object TwelveString {
   def makeBlocks(input: Array[Double], debugIndex: Option[Int] = None) = {
     val blocks = for (block <- input.grouped(blockSize) if block.length == blockSize) yield {
       val data = block.map(_.toDouble)
-      transformer.forward(data)
+      dhtTransformer.forward(data)
       val frequencies = new Array[Double](12)
       for ((x, i) <- data.zipWithIndex) {
-        val note = notes(i)
+        val f = if (i < blockSize / 2) i else blockSize - i
+        val note = notes(f)
         if (note != SilentNote) {
-          val impact = abs(x * weightings(i))
-          if (Some(note) == debugIndex) println(s"Adding $impact (freq $i, volume $x) to note $note")
+          val impact = abs(x * weightings(f))
+          if (Some(note) == debugIndex) println(s"Adding $impact (freq $f, volume $x) to note $note")
           frequencies(note) = frequencies(note) max impact
         }
       }
@@ -105,7 +107,7 @@ object TwelveString {
     }
     blocks.toIndexedSeq
   }
-
+  
   def makeBlocks16Bit(input: Array[Short]) = makeBlocks(input map (_.toDouble))
 
   def simpleNoteMaker(blocks: IndexedSeq[IndexedSeq[Double]]) = {
@@ -123,7 +125,7 @@ object TwelveString {
       val (vol, note) = block.zipWithIndex.maxBy(_._1)
       val minVol = block.min
       //if (vol < maxVol * threshold) SilentNote
-      if (vol / minVol < noiseThreshold) SilentNote
+      if (vol < minVol * noiseThreshold) SilentNote
       else {
         if (block(lastNote) > quality * vol) lastNote
         else {
