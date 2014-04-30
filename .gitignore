@@ -3,4 +3,7 @@
 *.raw
 *.ogg
 *.jpg
+*.txt
+*.cmd
+*.sh
 target/

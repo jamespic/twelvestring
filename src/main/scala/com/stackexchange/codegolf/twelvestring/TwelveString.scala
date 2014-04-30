@@ -32,6 +32,7 @@ object TwelveString {
   val threshold = 0.02
   val noiseThreshold = 2.5
   val noteWidth = 0.375
+  val tukeyAlpha = 0.3
 
   def note(f: Double) = {
     val roughNote = (log(f) - log(concertA)) / log(2) * 12
@@ -89,13 +90,20 @@ object TwelveString {
     if (x >= 0) x else x + 12
   }
 
+  def window(i: Int) = i match {
+    case n if i <= tukeyAlpha * (blockSize - 1) / 2 => (1 + cos(PI * (2 * n / (tukeyAlpha * (blockSize - 1)) - 1))) / 2
+    case n if i >= (blockSize - 1) * (1 - tukeyAlpha / 2) => (1 + cos(PI * (2 * n / (tukeyAlpha * (blockSize - 1)) - 2 / tukeyAlpha + 1))) / 2
+    case _ => 1.0
+  }
+
   def makeBlocks(input: Array[Double], debugIndex: Option[Int] = None) = {
     val blocks = for (block <- input.grouped(blockSize) if block.length == blockSize) yield {
-      val data = block.map(_.toDouble)
+      //val data = block.map(_.toDouble)
+      val data = block.zipWithIndex map {case (x, i) => x * window(i)}
       dhtTransformer.forward(data)
       val frequencies = new Array[Double](12)
-      for ((x, i) <- data.zipWithIndex) {
-        val f = if (i < blockSize / 2) i else blockSize - i
+      for (f <- 1 to blockSize / 2) {
+        val x = sqrt(data(f) ~^ 2 + data(blockSize - f) ~^ 2)
         val note = notes(f)
         if (note != SilentNote) {
           val impact = abs(x * weightings(f))
@@ -301,7 +309,7 @@ object TwelveString {
     val blocks = makeBlocks16Bit(data)
     val noteSeq = tweakableNoteMaker(blocks, quality)
     val entropised = noteEntropiser(noteSeq)
-    val table = new nayuki.arithcode.SimpleFrequencyTable(new Array[Int](14))
+    val table = new nayuki.arithcode.SimpleFrequencyTable(new Array[Int](13))
     for (code <- entropised) table.increment(code)
     table
   }
